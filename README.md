@@ -1,5 +1,6 @@
 Highly Scalable Non-blocking Hash Map in Rust
 --------
+[![Build Status](https://travis-ci.com/rlei/nonblockinghashmap.svg?branch=master)](https://travis-ci.com/rlei/nonblockinghashmap)
 
 The design of this hash map is taken and modified from [Dr. Cliff Click's design], [originally implemented in Java]. The hash map is thread-safe, thus can be safely used as a shared resource among multiple threads, without requiring mutual exclusion, and typesafe, because it is implemented in Rust. It is also scalable and can be shared among a large number of threads without experincing a major bottleneck. The work is currently under development.
 
