@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::cmp::min;
@@ -23,6 +24,28 @@ pub enum MatchingTypes {
 	MatchAllNotEmpty,
 	MatchValue,
 	FromCopySlot
+}
+
+#[derive(Debug)]
+pub struct ConcurrentMap<K, V> {
+	inner: UnsafeCell<NonBlockingHashMap<K, V>>
+}
+
+unsafe impl<K, V> Sync for ConcurrentMap<K, V> { }
+
+impl<K: Eq + Hash, V: Eq> ConcurrentMap<K, V> {
+	pub fn new() -> ConcurrentMap<K,V> {
+		ConcurrentMap { inner: UnsafeCell::new(NonBlockingHashMap::new()) }
+	}
+
+	pub fn new_with_size(initial_sz: usize) -> ConcurrentMap<K, V> {	
+		ConcurrentMap { inner: UnsafeCell::new(NonBlockingHashMap::new_with_size(initial_sz)) }
+	}
+
+	// "impl DerefMut for ConcurrentMap" won't work because of "deref(&mut self)"
+	pub fn as_mut(&self) -> &mut NonBlockingHashMap<K, V> {
+		unsafe { &mut *self.inner.get() }
+	}
 }
 
 // ---Hash Map --------------------------------------------------------------------
@@ -104,11 +127,10 @@ impl<K: Eq + Hash,V: Eq> NonBlockingHashMap<K,V> {
 			if (*kvs)._chm._newkvs.compare_and_swap(oldkvs, newkvs, MEMORY_ORDERING)==oldkvs{
 				(*kvs)._chm._has_newkvs = true;
 				self.rehash();
-			}
-			else {
+			} else {
 				newkvs = (*kvs)._chm._newkvs.load(MEMORY_ORDERING);
 			}
-			return newkvs;
+			newkvs
 		}
 	}
 
@@ -300,11 +322,8 @@ impl<K: Eq + Hash,V: Eq> NonBlockingHashMap<K,V> {
 
 			if should_help {
 				self.help_copy();
-				return (*oldkvs)._chm.get_newkvs_nonatomic();
 			}
-			else {
-				return (*oldkvs)._chm.get_newkvs_nonatomic();
-			}
+			(*oldkvs)._chm.get_newkvs_nonatomic()
 		}
 	}
 
@@ -403,19 +422,17 @@ impl<K: Eq + Hash,V: Eq> NonBlockingHashMap<K,V> {
 			return false; // State jump to {KeyTombStone, ValueTombPrime} for threads that lost the competition
 		}
 	}
-   // pub fn help_copy(&mut self){
-	//}
 
-	pub fn help_copy(&mut self){
+	pub fn help_copy(&mut self) {
 		unsafe {
-			if (*self.get_table_nonatomic())._chm.has_newkvs(){
+			if (*self.get_table_nonatomic())._chm.has_newkvs() {
 				let kvs: *mut KVs<K,V> = self.get_table_nonatomic();
 				self.help_copy_impl(kvs, false);
 			}
 		}
 	}
 
-	pub fn help_copy_impl(&mut self, oldkvs: *mut KVs<K,V>, copy_all: bool){
+	pub fn help_copy_impl(&mut self, oldkvs: *mut KVs<K,V>, copy_all: bool) {
 		//fence(MEMORY_ORDERING);
 		unsafe {
 			assert!((*oldkvs)._chm.has_newkvs());
@@ -546,24 +563,16 @@ pub fn value_to_string<V: Eq + ToString>(value: *mut Value<V>) -> String {
 	}
 }
 
-fn main(){
-	let put = 60;
-	let mut newmap = NonBlockingHashMap::<String, String>::new();
-	for i in 0..put {
-		newmap.put(format!("key{}", i), format!("value{}", i));
-		print_all(&newmap);
-	}
-}
-
 
 /****************************************************************************
  * Tests
  ****************************************************************************/
 #[cfg(test)]
 mod test {
-	use super::{Key, Value, KVs, NonBlockingHashMap, KeyEmpty, ValueEmpty, MEMORY_ORDERING};
+	use super::{Key, Value, KVs, ConcurrentMap, NonBlockingHashMap, KeyEmpty, ValueEmpty, MEMORY_ORDERING};
 	use std::sync::atomic::AtomicPtr;
-	use std::thread::sleep;
+	use std::sync::Arc;
+	use std::thread::{sleep, spawn};
 	use std::time::Duration;
 
 	#[test]
@@ -603,7 +612,7 @@ mod test {
 	}
 
 	#[test]
-	fn test_vey_eq(){
+	fn test_key_eq(){
 		assert!(Key::<i32>::new_empty()==Key::<i32>::new_empty());
 		assert!(Key::<i32>::new_tombstone()==Key::<i32>::new_tombstone());
 		assert!(Key::<i32>::new(10)==Key::<i32>::new(10));
@@ -666,5 +675,58 @@ mod test {
 			let new_len = (*(*map2._kvs.load(MEMORY_ORDERING))._chm._newkvs.load(MEMORY_ORDERING)).len();
 			assert_eq!(new_len, 16*4);
 		}
+	}
+
+	#[test]
+	fn test_hashmap_single_thread_grow(){
+		let mut map = NonBlockingHashMap::new_with_size(10);
+		for n in 0..200_000 {
+			map.put(n, n);
+		}
+		for n in 0..200_000 {
+			assert_eq!(n, *map.get(n).unwrap());
+		}
+	}
+
+	fn test_hashmap_concurrent(init_size: usize, nthreads: usize, num_keys: usize) {
+		let shared_map = Arc::new(ConcurrentMap::new_with_size(init_size));
+
+		let threads: Vec<_> = (0..nthreads).flat_map(|_| {
+			let child_map_put = shared_map.clone();
+			let child_map_get = shared_map.clone();
+			let writer = spawn(move|| {
+				for i in 0..num_keys {
+					child_map_put.as_mut().put(format!("key {}", i), format!("value {}", i));
+				}
+			});
+
+			let reader = spawn(move|| {
+				sleep(Duration::from_millis(10));
+				let mut hit = 0;
+				for i in 0..num_keys {
+					let key = format!("key {}", i);
+					if let Some(v) = child_map_get.as_mut().get(key) {
+						assert_eq!(*v, format!("value {}", i));
+						hit += 1;
+					}
+				}
+				assert!(hit > 0);
+			});
+			vec![writer, reader]
+		}).collect();
+		for t in threads {
+			t.join().expect("Error joining");
+		}
+	}
+
+	#[test]
+	fn test_hashmap_concurrent_rw_no_resize() {
+		test_hashmap_concurrent(10_000, 8, 10_000);
+	}
+
+	#[test]
+	fn test_hashmap_concurrent_rw_grow() {
+		// FIXME: SIGSEGV caught! Apparently we've found our first bug.
+		test_hashmap_concurrent(16, 8, 100_000);
 	}
 }
