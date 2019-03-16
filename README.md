@@ -26,9 +26,9 @@ To build the library:
 $ cargo build
 ```
 
-To run a test in the `main()` function:
+To run the example::
 ```bash
-$ target/debug/testmain
+$ cargo run --example testmain
 ```
 
 
