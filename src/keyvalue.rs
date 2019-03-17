@@ -10,6 +10,7 @@ pub enum KeyTypes{
 }
 
 pub struct Key<T> {
+	// TODO: instead of having a key type field, should make Key a sum type
 	pub _keytype: KeyTypes,
 	pub _key: *mut T,
 }
@@ -33,10 +34,11 @@ impl<T: Hash> Key<T> {
 	}
 
 	pub fn is_empty(&self) -> bool {
-		self._keytype==KeyTypes::KeyEmpty
+		self._keytype == KeyTypes::KeyEmpty
 	}
+
 	pub fn is_tombstone(&self) -> bool {
-		self._keytype==KeyTypes::KeyTombStone
+		self._keytype == KeyTypes::KeyTombStone
 	}
 
 	pub fn keytype(&self) -> KeyTypes {
@@ -71,7 +73,9 @@ impl<T: Hash> Hash for Key<T>{
 
 impl<T> Drop for Key<T> {
 	fn drop(&mut self){
-		drop(unsafe{ Box::from_raw(self._key) });
+		if self._keytype == KeyTypes::KeyType {
+			drop(unsafe{ Box::from_raw(self._key) });
+		}
 	}
 }
 
@@ -94,6 +98,7 @@ pub enum ValueTypes{
 }
 
 pub struct Value<T> {
+	// TODO: instead of having a key type field, should make Value a sum type
 	pub _valuetype: ValueTypes,
 	pub _value: *mut T,
 	pub _is_prime: bool
@@ -126,12 +131,13 @@ impl<T> Value<T> {
 	}
 
 	pub fn is_tombstone(&self) -> bool{
-		self._valuetype==ValueTypes::ValueTombStone
+		self._valuetype == ValueTypes::ValueTombStone
 	}
 
 	pub fn is_prime(&self) -> bool {
 		self._is_prime	
 	}
+
 	pub fn is_tombprime(&self) -> bool {
 		self.is_prime() && self.is_tombstone()
 	}
@@ -157,7 +163,9 @@ impl<T> Value<T> {
 
 impl<T> Drop for Value<T> {
 	fn drop(&mut self){
-		drop(unsafe{ Box::from_raw(self._value)});
+		if self._valuetype == ValueTypes::ValueType {
+			drop(unsafe{ Box::from_raw(self._value)});
+		}
 	}
 }
 
@@ -170,4 +178,43 @@ impl<T: PartialEq> PartialEq for Value<T>{
 		if (self._value==other._value || unsafe{ *self._value == *other._value}) && self._is_prime==other._is_prime { return true; }
 		return false;
 	}	
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{Key, Value};
+
+	#[test]
+	fn test_key_drop() {
+		drop(Key::new(42));
+		drop(Key::new(String::from("Hello")));
+	}
+
+	#[test]
+	fn test_key_empty_tombstone_drop() {
+		drop(Key::<String>::new_empty());
+		drop(Key::<String>::new_tombstone());
+	}
+
+	#[test]
+	fn test_value_drop() {
+		drop(Value::new(42));
+		drop(Value::new_prime(42));
+		drop(Value::new(String::from("Hello")));
+		drop(Value::new_prime(String::from("Hello")));
+		drop(Value::new(String::from("Hello")).get_prime());
+		drop(Value::new_prime(String::from("Hello")).get_unprime());
+	}
+
+	#[test]
+	fn test_value_tombstones_drop() {
+		let value = Value::<String>::new_tombstone();
+		drop(value);
+		let value = Value::<String>::new_tombstone().get_prime();
+		drop(value);
+		let value = Value::<String>::new_tombprime();
+		drop(value);
+		let value = Value::<String>::new_tombprime().get_unprime();
+		drop(value);
+	}
 }

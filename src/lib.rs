@@ -195,12 +195,12 @@ impl<K: Eq + Hash,V: Eq> NonBlockingHashMap<K,V> {
 				// Start re-probing
 				reprobe_cnt += 1;
 				if reprobe_cnt >= REPROBE_LIMIT || 
-					(*key).is_tombstone() // Enter state {KeyTombStone, Empty}; steal exucution path for optimization; let helper save the day.
-					{
-						let newkvs = self.resize(kvs); 
-						if expval_not_empty { self.help_copy(); }
-						return self.put_if_match_impl(newkvs, key, putval, matchingtype,  expval); // Put in the new table instead
-					} 
+					(*key).is_tombstone() {
+						// Enter state {KeyTombStone, Empty}; steal exucution path for optimization; let helper save the day.
+					let newkvs = self.resize(kvs); 
+					if expval_not_empty { self.help_copy(); }
+					return self.put_if_match_impl(newkvs, key, putval, matchingtype,  expval); // Put in the new table instead
+				} 
 				idx = (idx+1)&(len-1);
 				k = (*kvs).get_key_nonatomic_at(idx);
 				v = (*kvs).get_value_nonatomic_at(idx);
@@ -679,12 +679,12 @@ mod test {
 
 	#[test]
 	fn test_hashmap_single_thread_grow(){
-		let mut map = NonBlockingHashMap::new_with_size(10);
+		let map = ConcurrentMap::new_with_size(10);
 		for n in 0..200_000 {
-			map.put(n, n);
+			map.as_mut().put(n, n);
 		}
 		for n in 0..200_000 {
-			assert_eq!(n, *map.get(n).unwrap());
+			assert_eq!(n, *map.as_mut().get(n).unwrap());
 		}
 	}
 
@@ -721,12 +721,11 @@ mod test {
 
 	#[test]
 	fn test_hashmap_concurrent_rw_no_resize() {
-		test_hashmap_concurrent(10_000, 8, 10_000);
+		test_hashmap_concurrent(100_000, 8, 100_000);
 	}
 
 	#[test]
 	fn test_hashmap_concurrent_rw_grow() {
-		// FIXME: SIGSEGV caught! Apparently we've found our first bug.
 		test_hashmap_concurrent(16, 8, 100_000);
 	}
 }
