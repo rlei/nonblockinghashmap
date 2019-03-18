@@ -52,7 +52,7 @@ impl<K: Hash, V> KVs<K, V> {
     }
 
     pub fn reprobe_limit(&self) -> usize {
-        REPROBE_LIMIT + self._ks.len() << 2
+        REPROBE_LIMIT + (self._ks.len() << 2)
     }
 
     pub fn len(&self) -> usize {

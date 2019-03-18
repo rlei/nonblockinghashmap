@@ -9,7 +9,7 @@ fn main() {
     let shared_map = Arc::new(newmap);
     let nthreads = 30;
     let put = 1000;
-    let get = 100000;
+    let get = 100_000;
 
     let threads: Vec<_> = (0..nthreads)
         .flat_map(|n| {
