@@ -327,6 +327,8 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
     pub fn get<'a>(&'a mut self, key: K) -> Option<&'a V> {
         let table = self.get_table_nonatomic();
         let maybe_val =
+			// FIXME: the new boxed key will be leaked after into_raw()!
+			// plus, there's no need to wrap key in Key<K> in get() at all.
             unsafe { self.get_impl(table, Box::into_raw(Box::new(Key::<K>::new(key)))) };
         maybe_val.map(|v| unsafe { &*(*v)._value })
     }
@@ -441,6 +443,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         while (*key).is_empty() {
             if (*oldkvs)._ks[idx].compare_and_swap(key, tombstone_ptr, MEMORY_ORDERING) == key {
                 // Attempt {Empty, Empty} -> {KeyTombStone, Empty}
+				// FIXME: key is leaked (slot replaced by newly allocated tomestone)
                 return true;
             }
             key = (*oldkvs).get_key_nonatomic_at(idx);
@@ -468,11 +471,13 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
             };
             if (*oldkvs)._vs[idx].compare_and_swap(oldvalue, primed, MEMORY_ORDERING) == oldvalue {
                 if (*primed).valuetype() == ValueTombStone {
+					// FIXME: oldvalue leaked
                     return true;
                 }
                 // Transition: {Key, Empty} -> {Key, ValueTombPrime} or {Key, ValueTombStone} -> {Key, ValueTombPrime}
                 else {
                     // Transition: {Key, Value} -> {Key, Value'}
+					// FIXME: oldvalue leaked
                     oldvalue = primed;
                     break;
                 }
@@ -513,6 +518,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
             if (*oldkvs)._vs[idx].compare_and_swap(oldvalue, tombprime_ptr, MEMORY_ORDERING)
                 == oldvalue
             {
+				// FIXME: oldvalue leaked
                 return true;
             }
             oldvalue = (*oldkvs).get_value_nonatomic_at(idx);
