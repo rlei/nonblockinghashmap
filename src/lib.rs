@@ -2,19 +2,19 @@ use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::ptr;
+// use std::ptr;
 use std::string::ToString;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::time::{Duration, Instant};
 
-use keyvalue::{
+mod keyvalue;
+mod kvtable;
+
+use crate::keyvalue::{
     Key, KeyTypes::KeyEmpty, KeyTypes::KeyTombStone, KeyTypes::KeyType, Value,
     ValueTypes::ValueEmpty, ValueTypes::ValueTombStone, ValueTypes::ValueType,
 };
-use kvtable::{KVs, REPROBE_LIMIT};
-
-mod keyvalue;
-mod kvtable;
+use crate::kvtable::{KVs, REPROBE_LIMIT};
 
 const MIN_SIZE_LOG: u32 = 3;
 const MIN_SIZE: usize = 1 << MIN_SIZE_LOG;
@@ -35,6 +35,12 @@ pub struct ConcurrentMap<K, V> {
 }
 
 unsafe impl<K, V> Sync for ConcurrentMap<K, V> {}
+
+impl<K: Eq + Hash, V: Eq> Default for ConcurrentMap<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<K: Eq + Hash, V: Eq> ConcurrentMap<K, V> {
     pub fn new() -> ConcurrentMap<K, V> {
@@ -62,6 +68,12 @@ pub struct NonBlockingHashMap<K, V> {
     _kvs: AtomicPtr<KVs<K, V>>,
     //_reprobes: AtomicUint,
     _last_resize: Instant,
+}
+
+impl<K: Eq + Hash, V: Eq> Default for NonBlockingHashMap<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
@@ -183,6 +195,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         &(*(*returnval)._value)
     }
 
+    // FIXME: clippy::cyclomatic_complexity: the function has a cyclomatic complexity of 26
     unsafe fn put_if_match_impl(
         &mut self,
         kvs: *mut KVs<K, V>,
@@ -196,7 +209,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         assert!(!(*putval).is_empty()); // Never put a ValueEmpty type
         assert!(!(*putval).is_prime()); // Never put a Prime type
         assert!(matchingtype != MatchingTypes::MatchValue || !expval.is_none()); // If matchingtype==MatchValue then expval must contain something
-        if !expval.is_none() {
+        if expval.is_some() {
             assert!(!(*expval.unwrap()).is_prime());
         } // Never expect a Prime type
 
@@ -268,13 +281,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
             // Check for the last time if kvs is the newest table
             let expval_is_empty = {
                 match expval {
-                    Some(val) => {
-                        if (*val).is_empty() {
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    Some(val) => (*val).is_empty(),
                     None => true,
                 }
             };
@@ -324,7 +331,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         }
     }
 
-    pub fn get<'a>(&'a mut self, key: K) -> Option<&'a V> {
+    pub fn get(&mut self, key: K) -> Option<&V> {
         let table = self.get_table_nonatomic();
         let maybe_val =
             // FIXME: the new boxed key will be leaked after into_raw()!
@@ -393,7 +400,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         should_help: bool,
     ) -> *mut KVs<K, V> {
         //fence(MEMORY_ORDERING);
-        assert!((*oldkvs)._chm.get_newkvs_nonatomic() != ptr::null_mut());
+        assert!(!(*oldkvs)._chm.get_newkvs_nonatomic().is_null());
         if self.copy_slot(oldkvs, idx) {
             self.copy_check_and_promote(oldkvs, 1);
         }
@@ -704,23 +711,17 @@ mod test {
     #[test]
     fn test_kv_destroy() {
         unsafe {
-            let mut p: *mut i32 = Box::into_raw(Box::new(5));
             {
                 let kv = Key::new(10);
-                p = kv.get_key();
+                let p = kv.get_key();
                 assert!((*p) == 10);
             }
-            assert!((*p) != 10);
-            assert!((*p) != 5);
 
-            let mut p: *mut i32 = Box::into_raw(Box::new(5));
             {
                 let kv = Value::new(10);
-                p = kv.get_value();
+                let p = kv.get_value();
                 assert!((*p) == 10);
             }
-            assert!((*p) != 10);
-            assert!((*p) != 5);
         }
     }
 
