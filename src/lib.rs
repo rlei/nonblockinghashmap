@@ -49,9 +49,9 @@ impl<K: Eq + Hash, V: Eq> ConcurrentMap<K, V> {
         }
     }
 
-    pub fn new_with_size(initial_sz: usize) -> ConcurrentMap<K, V> {
+    pub fn with_capacity(initial_sz: usize) -> ConcurrentMap<K, V> {
         ConcurrentMap {
-            inner: UnsafeCell::new(NonBlockingHashMap::new_with_size(initial_sz)),
+            inner: UnsafeCell::new(NonBlockingHashMap::with_capacity(initial_sz)),
         }
     }
 
@@ -76,12 +76,21 @@ impl<K: Eq + Hash, V: Eq> Default for NonBlockingHashMap<K, V> {
     }
 }
 
+impl<K, V> Drop for NonBlockingHashMap<K, V> {
+    fn drop(&mut self) {
+        let p = self._kvs.load(Ordering::SeqCst);
+        if !p.is_null() {
+            drop(unsafe { Box::from_raw(p) });
+        }
+    }
+}
+
 impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
     pub fn new() -> NonBlockingHashMap<K, V> {
-        NonBlockingHashMap::new_with_size(MIN_SIZE)
+        NonBlockingHashMap::with_capacity(MIN_SIZE)
     }
 
-    pub fn new_with_size(initial_sz: usize) -> NonBlockingHashMap<K, V> {
+    pub fn with_capacity(initial_sz: usize) -> NonBlockingHashMap<K, V> {
         let mut initial_sz = initial_sz;
         if initial_sz > 1024 * 1024 {
             initial_sz = 1024 * 1024;
@@ -437,6 +446,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         {
             //println!("---obsolete---")
             //print_kvs(oldkvs);
+            //drop(Box::from_raw(oldkvs));
             self._last_resize = Instant::now();
         }
     }
@@ -450,7 +460,8 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         while (*key).is_empty() {
             if (*oldkvs)._ks[idx].compare_and_swap(key, tombstone_ptr, MEMORY_ORDERING) == key {
                 // Attempt {Empty, Empty} -> {KeyTombStone, Empty}
-                // FIXME: key is leaked (slot replaced by newly allocated tomestone)
+                // FIXME: memory leak
+                //drop(Box::from_raw(key));
                 return true;
             }
             key = (*oldkvs).get_key_nonatomic_at(idx);
@@ -460,6 +471,9 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         // Enter state: {KeyTombStone, Empty}
         // ---------------------------------------------------------
         if (*key).is_tombstone() {
+            if key != tombstone_ptr {
+                //drop(Box::from_raw(tombstone_ptr));
+            }
             return false;
         }
         // ---------------------------------------------------------
@@ -765,7 +779,7 @@ mod test {
 
     #[test]
     fn test_hashmap_init() {
-        let map = NonBlockingHashMap::<i32, i32>::new_with_size(10);
+        let map = NonBlockingHashMap::<i32, i32>::with_capacity(10);
         assert!(map.capacity() == 16 * 4);
         unsafe {
             assert!((*map._kvs.load(MEMORY_ORDERING))
@@ -778,7 +792,7 @@ mod test {
 
     #[test]
     fn test_hashmap_resize() {
-        let map1 = NonBlockingHashMap::<i32, i32>::new_with_size(10);
+        let map1 = NonBlockingHashMap::<i32, i32>::with_capacity(10);
         let kvs = map1._kvs.load(MEMORY_ORDERING);
         unsafe {
             map1.resize(kvs);
@@ -793,7 +807,7 @@ mod test {
                 16 * 4 * 4
             );
         }
-        let map2 = NonBlockingHashMap::<i32, i32>::new_with_size(10);
+        let map2 = NonBlockingHashMap::<i32, i32>::with_capacity(10);
         sleep(Duration::from_millis(2000));
         unsafe {
             map2.resize(map2._kvs.load(MEMORY_ORDERING));
@@ -808,7 +822,7 @@ mod test {
 
     #[test]
     fn test_hashmap_single_thread_grow() {
-        let map = ConcurrentMap::new_with_size(10);
+        let map = ConcurrentMap::with_capacity(10);
         for n in 0..200_000 {
             map.as_mut().put(n, n);
         }
@@ -818,7 +832,7 @@ mod test {
     }
 
     fn test_hashmap_concurrent(init_size: usize, nthreads: usize, num_keys: usize) {
-        let shared_map = Arc::new(ConcurrentMap::new_with_size(init_size));
+        let shared_map = Arc::new(ConcurrentMap::with_capacity(init_size));
 
         let threads: Vec<_> = (0..nthreads)
             .flat_map(|_| {
@@ -854,7 +868,7 @@ mod test {
 
     #[test]
     fn test_hashmap_concurrent_rw_no_resize() {
-        test_hashmap_concurrent(100_000, 8, 100_000);
+        test_hashmap_concurrent(10_000, 8, 10_000);
     }
 
     #[test]

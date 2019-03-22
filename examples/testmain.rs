@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread::spawn;
 
 fn main() {
-    let newmap = ConcurrentMap::new_with_size(1000);
+    let newmap = ConcurrentMap::with_capacity(1000);
     let shared_map = Arc::new(newmap);
     let nthreads = 30;
     let put = 1000;

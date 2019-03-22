@@ -149,14 +149,6 @@ impl<T> Value<T> {
         }
     }
 
-    pub fn new_prime(v: T) -> Value<T> {
-        Value {
-            _valuetype: ValueTypes::ValueType,
-            _value: Box::into_raw(Box::new(v)),
-            _is_prime: true,
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         assert!(self._value.is_null() == (self._valuetype == ValueTypes::ValueEmpty));
         self._valuetype == ValueTypes::ValueEmpty
@@ -248,9 +240,7 @@ mod tests {
     #[test]
     fn test_value_drop() {
         drop(Value::new(42));
-        drop(Value::new_prime(42));
         drop(Value::new(String::from("Hello")));
-        drop(Value::new_prime(String::from("Hello")));
         // FIXME: double free with get_prime()
         // drop(unsafe { Box::from_raw(Value::new(String::from("Hello")).get_prime()) });
         // drop(unsafe { Box::from_raw(Value::new_prime(String::from("Hello")).get_unprime()) });
