@@ -2,7 +2,6 @@ use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-// use std::ptr;
 use std::string::ToString;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::time::{Duration, Instant};
@@ -111,10 +110,18 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         self._kvs.load(MEMORY_ORDERING)
     }
 
+    // comment from the original Java NBHM
+    // Resizing after too many probes.  "How Big???" heuristics are here.
+    // Callers will (not this routine) will 'help_copy' any in-progress copy.
+    // Since this routine has a fast cutout for copy-already-started, callers
+    // MUST 'help_copy' lest we have a path which forever runs through
+    // 'resize' only to discover a copy-in-progress which never progresses.
     unsafe fn resize(&self, kvs: *mut KVs<K, V>) -> *mut KVs<K, V> {
-        //fence(MEMORY_ORDERING);
-        if (*kvs)._chm.has_newkvs() {
-            return (*kvs)._chm._newkvs.load(MEMORY_ORDERING);
+        let mut newkvs = (*kvs)._chm.get_newkvs_nonatomic();
+        // See if resize is already in progress
+        if !newkvs.is_null() {
+            // Use the new table already
+            return newkvs;
         }
 
         let oldlen: usize = (*kvs).len();
@@ -145,29 +152,36 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
             log2 += 1
         }
 
-        if (*kvs)._chm.has_newkvs() {
-            return (*kvs)._chm._newkvs.load(MEMORY_ORDERING);
+        newkvs = (*kvs)._chm.get_newkvs_nonatomic();
+        if !newkvs.is_null() {
+            // Use the new table already
+            return newkvs;
         }
 
-        let mut newkvs = Box::into_raw(Box::new(KVs::<K, V>::new(1 << log2)));
+        let newkvs_alloc = Box::into_raw(Box::new(KVs::<K, V>::new(1 << log2)));
 
-        if (*kvs)._chm.has_newkvs() {
-            return (*kvs)._chm._newkvs.load(MEMORY_ORDERING);
+        newkvs = (*kvs)._chm.get_newkvs_nonatomic();
+        if !newkvs.is_null() {
+            // FIXME: this happens a lot! we do need to also port the resizer limit
+            //       logic from the original Java NBHM
+            println!("some one got ahead of us when resizing");
+            // unfortunately some other thread got ahead when we're allocating newkvs_alloc
+            drop(Box::from_raw(newkvs_alloc));
+            // Use the new table already
+            return newkvs;
         }
 
-        let oldkvs = (*kvs)._chm._newkvs.load(MEMORY_ORDERING);
         if (*kvs)
             ._chm
             ._newkvs
-            .compare_and_swap(oldkvs, newkvs, MEMORY_ORDERING)
-            == oldkvs
+            .compare_and_swap(newkvs, newkvs_alloc, MEMORY_ORDERING)
+            == newkvs
         {
-            (*kvs)._chm._has_newkvs = true;
             self.rehash();
+            newkvs_alloc
         } else {
-            newkvs = (*kvs)._chm._newkvs.load(MEMORY_ORDERING);
+            (*kvs)._chm._newkvs.load(MEMORY_ORDERING)
         }
-        newkvs
     }
 
     pub fn put<'a>(&mut self, key: K, newval: V) -> &'a V {
@@ -279,14 +293,14 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         if (*putval) == (*v) {
             return v;
         } // Steal path exucution for optimization; let helper save the day.
-        if (*kvs)._chm.has_newkvs()
+        if !(*kvs)._chm.get_newkvs_nonatomic().is_null()
             && (( (*v).is_tombstone() && (*kvs).table_full(reprobe_cnt) ) || // Resize if the table is full.
                 (*v).is_prime())
         // I don't understand this, but I take it from the original code anyway. It is some sort of invalid state caused by compilier's optimization.
         {
             self.resize(kvs);
         }
-        if (*kvs)._chm.has_newkvs() {
+        if !(*kvs)._chm.get_newkvs_nonatomic().is_null() {
             // Check for the last time if kvs is the newest table
             let expval_is_empty = {
                 match expval {
@@ -387,7 +401,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
             }
             reprobe_cnt += 1;
             if reprobe_cnt >= REPROBE_LIMIT || (*k).is_tombstone() {
-                if (*kvs)._chm.has_newkvs() {
+                if !(*kvs)._chm.get_newkvs_nonatomic().is_null() {
                     self.help_copy();
                     return self.get_impl_supply_hash(
                         (*kvs)._chm.get_newkvs_nonatomic(),
@@ -446,7 +460,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
         {
             //println!("---obsolete---")
             //print_kvs(oldkvs);
-            //drop(Box::from_raw(oldkvs));
+            // FIXME: drop(Box::from_raw(oldkvs));
             self._last_resize = Instant::now();
         }
     }
@@ -491,7 +505,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
                 }
             };
             if (*oldkvs)._vs[idx].compare_and_swap(oldvalue, primed, MEMORY_ORDERING) == oldvalue {
-                if (*primed).valuetype() == ValueTombStone {
+                if (*primed).is_tombstone() {
                     // FIXME: oldvalue leaked
                     return true;
                 }
@@ -550,7 +564,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
     }
 
     unsafe fn help_copy(&mut self) {
-        if (*self.get_table_nonatomic())._chm.has_newkvs() {
+        if !(*self.get_table_nonatomic())._chm.get_newkvs_nonatomic().is_null() {
             let kvs: *mut KVs<K, V> = self.get_table_nonatomic();
             self.help_copy_impl(kvs, false);
         }
@@ -558,7 +572,7 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
 
     unsafe fn help_copy_impl(&mut self, oldkvs: *mut KVs<K, V>, copy_all: bool) {
         //fence(MEMORY_ORDERING);
-        assert!((*oldkvs)._chm.has_newkvs());
+        assert!(!(*oldkvs)._chm.get_newkvs_nonatomic().is_null());
         let oldlen = (*oldkvs).len();
         let min_copy_work = min(oldlen, 1024);
         let mut panic_start = false;
@@ -868,7 +882,7 @@ mod test {
 
     #[test]
     fn test_hashmap_concurrent_rw_no_resize() {
-        test_hashmap_concurrent(10_000, 8, 10_000);
+        test_hashmap_concurrent(100_000, 8, 100_000);
     }
 
     #[test]

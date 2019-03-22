@@ -77,7 +77,6 @@ pub struct CHM<K, V> {
     pub _slots: AtomicUsize,
     pub _copy_done: AtomicUsize,
     pub _copy_idx: AtomicUsize,
-    pub _has_newkvs: bool,
     //_resizer: AtomicU32,
 }
 
@@ -89,18 +88,14 @@ impl<K, V> CHM<K, V> {
             _slots: AtomicUsize::new(0),
             _copy_done: AtomicUsize::new(0),
             _copy_idx: AtomicUsize::new(0),
-            _has_newkvs: false,
         }
     }
 
+    // FIXME: why "non atomic"?
     pub fn get_newkvs_nonatomic(&self) -> *mut KVs<K, V> {
         self._newkvs.load(Ordering::SeqCst)
     }
 
-    pub fn has_newkvs(&self) -> bool {
-        assert!((!self._newkvs.load(Ordering::SeqCst).is_null()) == self._has_newkvs);
-        self._has_newkvs
-    }
 }
 
 impl<K, V> Drop for CHM<K, V> {
