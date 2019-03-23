@@ -77,7 +77,7 @@ pub struct CHM<K, V> {
     pub _slots: AtomicUsize,
     pub _copy_done: AtomicUsize,
     pub _copy_idx: AtomicUsize,
-    //_resizer: AtomicU32,
+    pub _resizer: AtomicUsize,
 }
 
 impl<K, V> CHM<K, V> {
@@ -88,6 +88,7 @@ impl<K, V> CHM<K, V> {
             _slots: AtomicUsize::new(0),
             _copy_done: AtomicUsize::new(0),
             _copy_idx: AtomicUsize::new(0),
+            _resizer: AtomicUsize::new(0),
         }
     }
 
@@ -95,7 +96,6 @@ impl<K, V> CHM<K, V> {
     pub fn get_newkvs_nonatomic(&self) -> *mut KVs<K, V> {
         self._newkvs.load(Ordering::SeqCst)
     }
-
 }
 
 impl<K, V> Drop for CHM<K, V> {

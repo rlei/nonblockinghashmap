@@ -4,6 +4,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::string::ToString;
 use std::sync::atomic::{AtomicPtr, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 mod keyvalue;
@@ -158,29 +159,34 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
             return newkvs;
         }
 
-        let newkvs_alloc = Box::into_raw(Box::new(KVs::<K, V>::new(1 << log2)));
-
-        newkvs = (*kvs)._chm.get_newkvs_nonatomic();
-        if !newkvs.is_null() {
-            // FIXME: this happens a lot! we do need to also port the resizer limit
-            //       logic from the original Java NBHM
-            println!("some one got ahead of us when resizing");
-            // unfortunately some other thread got ahead when we're allocating newkvs_alloc
-            drop(Box::from_raw(newkvs_alloc));
-            // Use the new table already
-            return newkvs;
-        }
-
-        if (*kvs)
-            ._chm
-            ._newkvs
-            .compare_and_swap(newkvs, newkvs_alloc, MEMORY_ORDERING)
-            == newkvs
-        {
+        // The java NBHM seems to have a bug here. Hopefully we make it right.
+        let num_resizer = (*kvs)._chm._resizer.fetch_add(1, MEMORY_ORDERING);
+        if num_resizer == 0 {
+            // we're the first, let's allocate the new table
+            //println!("we are the first thread to reallocate");
+            let newkvs_alloc = Box::into_raw(Box::new(KVs::<K, V>::new(1 << log2)));
+            if (*kvs)
+                ._chm
+                ._newkvs
+                .compare_and_swap(newkvs, newkvs_alloc, MEMORY_ORDERING)
+                != newkvs
+            {
+                // impossible
+                panic!("_chm._newkvs changed by unknown thread");
+            }
             self.rehash();
             newkvs_alloc
         } else {
-            (*kvs)._chm._newkvs.load(MEMORY_ORDERING)
+            // wait for the allocating thread to finish its job
+            //println!("some one got ahead of us when resizing. we are {}", num_resizer);
+            newkvs = (*kvs)._chm.get_newkvs_nonatomic();
+            while newkvs.is_null() {
+                newkvs = (*kvs)._chm.get_newkvs_nonatomic();
+                thread::park_timeout(Duration::from_nanos(0));
+                //thread::yield_now();
+            }
+            //println!("got new kvs. we are {}", num_resizer);
+            newkvs
         }
     }
 
@@ -564,7 +570,11 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
     }
 
     unsafe fn help_copy(&mut self) {
-        if !(*self.get_table_nonatomic())._chm.get_newkvs_nonatomic().is_null() {
+        if !(*self.get_table_nonatomic())
+            ._chm
+            .get_newkvs_nonatomic()
+            .is_null()
+        {
             let kvs: *mut KVs<K, V> = self.get_table_nonatomic();
             self.help_copy_impl(kvs, false);
         }
