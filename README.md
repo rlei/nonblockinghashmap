@@ -19,13 +19,13 @@ To simplify things and make them easier to understand, let us start by assumming
 [...more explanation on the way...]
 
 ## Current State of Development
-As for now, the `put_if_match` and `copy_check_and_promote` function work fine with multiple threads, but there could be some hidden bugs and possibly memory leak. However, I did not see any bugs while testing it.
+This library is still in its early development stage. For next milestone and current outstanding issues, see [0.1.0-alpha](https://github.com/rlei/nonblockinghashmap/milestone/1)
 
 ## Setup & Run
 
 To build the library:
 ```bash
-$ cargo build
+$ cargo build [--release]
 ```
 
 To run the example::
