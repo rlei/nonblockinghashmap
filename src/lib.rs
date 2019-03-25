@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 mod keyvalue;
 mod kvtable;
+mod key;
 
 use crate::keyvalue::{
     Key, KeyTypes::KeyEmpty, KeyTypes::KeyTombStone, KeyTypes::KeyType, Value,
@@ -174,7 +175,6 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
                 // impossible
                 panic!("_chm._newkvs changed by unknown thread");
             }
-            self.rehash();
             newkvs_alloc
         } else {
             // wait for the allocating thread to finish its job
@@ -647,12 +647,6 @@ impl<K: Eq + Hash, V: Eq> NonBlockingHashMap<K, V> {
             }
         }
     }
-
-    unsafe fn fast_keyeq(k: *mut Key<K>, hashk: u64, key: *mut Key<K>, hashkey: u64) -> bool {
-        k == key || ((hashk == 0 || hashk == hashkey) && !(*k).is_tombstone() && (*key) == (*k))
-    }
-
-    pub fn rehash(&self) {}
 
     pub fn capacity(&self) -> usize {
         unsafe { (*self._kvs.load(MEMORY_ORDERING)).len() }
