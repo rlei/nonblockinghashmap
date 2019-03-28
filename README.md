@@ -19,18 +19,18 @@ To simplify things and make them easier to understand, let us start by assumming
 [...more explanation on the way...]
 
 ## Current State of Development
-This library is still in its early development stage. For next milestone and current outstanding issues, see [0.1.0-alpha](https://github.com/rlei/nonblockinghashmap/milestone/1)
+This library is still in its early development stage, *and requires Rust nightly to build*. For next milestone and current outstanding issues, see [0.1.0-alpha](https://github.com/rlei/nonblockinghashmap/milestone/1)
 
 ## Setup & Run
 
 To build the library:
 ```bash
-$ cargo build [--release]
+$ cargo +nightly build [--release]
 ```
 
 To run the example::
 ```bash
-$ cargo run --example testmain
+$ cargo +nightly run --example testmain
 ```
 
 

@@ -1,3 +1,4 @@
+#![feature(core_intrinsics)]
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::collections::hash_map::DefaultHasher;
@@ -10,6 +11,7 @@ use std::time::{Duration, Instant};
 mod keyvalue;
 mod kvtable;
 mod key;
+mod atomicvec;
 
 use crate::keyvalue::{
     Key, KeyTypes::KeyEmpty, KeyTypes::KeyTombStone, KeyTypes::KeyType, Value,
