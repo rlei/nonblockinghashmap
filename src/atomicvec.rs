@@ -16,9 +16,24 @@ impl<T> AtomicVec<T> {
 
     pub fn cas(&mut self, index: usize, old: *mut T, val: *mut T) -> *mut T {
         assert!(index < self.v.len());
-        let (val, ok) = unsafe { intrinsics::atomic_cxchg(self.v.as_mut_ptr().offset(index as isize) as *mut usize,
+        let (val, _) = unsafe { intrinsics::atomic_cxchg(self.v.as_mut_ptr().offset(index as isize) as *mut usize,
             old as usize, val as usize) };
         val as *mut T
+    }
+
+    pub fn len(&self) -> usize {
+        self.v.len()
+    }
+}
+
+impl<T> Drop for AtomicVec<T> {
+    fn drop(&mut self) {
+        for i in 0..self.v.len() {
+            let p = self.load(i);
+            if !p.is_null() {
+                drop(unsafe { Box::from_raw(p) });
+            }
+        }
     }
 }
 
@@ -41,6 +56,10 @@ mod tests {
         let p1 = Box::into_raw(Box::new(42));
         assert_eq!(p, v.cas(10, p, p1));
         unsafe { Box::from_raw(p) };
+
+        assert_eq!(p1, v.load(10));
+        assert!(v.load(11).is_null());
+        assert!(v.load(9).is_null());
 
         assert_eq!(p1, v.cas(10, p1, std::ptr::null_mut()));
         assert!(v.cas(10, p1, std::ptr::null_mut()).is_null());
